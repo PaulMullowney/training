@@ -23,6 +23,10 @@ from absl import flags
 from absl import logging
 import tensorflow as tf
 
+import HIP.roctx as roctx
+from mytracer import trace_time
+roctx.init()
+
 from tf2_common.modeling import performance
 from tf2_common.training import controller
 from tf2_common.utils.flags import core as flags_core
@@ -55,7 +59,12 @@ flags.DEFINE_integer(name='device_warmup_steps', default=1,
 flags.DEFINE_integer(name='num_replicas', default=32,
                      help='The number of TPU cores to use, '
                      'for log printout only.')
-
+flags.DEFINE_integer(name='dataset_divider', default=1,
+                     help='fraction of the dataset to use')
+flags.DEFINE_integer(name='roctx_start', default=1,
+                     help='value of global_step to start profiling')
+flags.DEFINE_integer(name='roctx_stop', default=2,
+                     help='value of global_step to stop profiling')
 
 def build_stats(runnable, time_callback):
   """Normalizes and returns dictionary of stats.
@@ -142,7 +151,7 @@ def run(flags_obj):
   data_format = flags_obj.data_format
   if data_format is None:
     data_format = ('channels_first'
-                   if tf.test.is_built_with_cuda() else 'channels_last')
+                   if (tf.test.is_built_with_cuda() or tf.test.is_built_with_rocm()) else 'channels_last')
   tf.keras.backend.set_image_data_format(data_format)
 
   strategy = distribution_utils.get_distribution_strategy(
@@ -254,14 +263,16 @@ def define_imagenet_keras_flags():
   flags_core.set_defaults()
   flags.adopt_module_key_flags(common)
 
-
+@trace_time
 def main(_):
   model_helpers.apply_clean(flags.FLAGS)
+  tf.config.experimental_run_functions_eagerly(flags.FLAGS.enable_eager)
   with logger.benchmark_context(flags.FLAGS):
     stats = run(flags.FLAGS)
   logging.info('Run stats:\n%s', stats)
 
 
+import sys
 if __name__ == '__main__':
   logging.set_verbosity(logging.INFO)
   common.define_keras_flags()

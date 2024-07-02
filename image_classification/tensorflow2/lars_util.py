@@ -143,9 +143,9 @@ class PolynomialDecayWithWarmup(
   def _get_learning_rate(self, step):
     with ops.name_scope_v2(self.name or 'PolynomialDecayWithWarmup') as name:
 
-      initial_learning_rate = ops.convert_to_tensor_v2(
+      initial_learning_rate = ops.convert_to_tensor(
           self.initial_learning_rate, name='initial_learning_rate')
-      warmup_steps = ops.convert_to_tensor_v2(
+      warmup_steps = ops.convert_to_tensor(
           self.warmup_steps, name='warmup_steps')
 
       warmup_rate = (

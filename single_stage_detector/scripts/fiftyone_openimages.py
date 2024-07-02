@@ -20,12 +20,12 @@ args = parser.parse_args()
 
 print("Downloading open-images dataset ...")
 dataset = foz.load_zoo_dataset(
-    name="open-images-v6",
-    classes=args.classes,
-    splits=args.splits,
-    label_types="detections",
-    dataset_name="open-images",
-    dataset_dir=args.dataset_dir
+   name="open-images-v6",
+   classes=args.classes,
+   splits=args.splits,
+   label_types="detections",
+   dataset_name="open-images",
+   dataset_dir=args.dataset_dir
 )
 
 print("Converting dataset to coco format ...")
@@ -35,8 +35,8 @@ for split in args.splits:
     split_view.export(
         labels_path=output_fname,
         dataset_type=fo.types.COCODetectionDataset,
-        label_field="detections",
         classes=args.classes)
+#            label_field="detections",
 
     # Add iscrowd label to openimages annotations
     with open(output_fname) as fp:

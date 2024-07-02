@@ -26,6 +26,9 @@ from typing import Dict, Optional, Text
 from tf2_common.training import runnable
 from tf2_common.training import utils
 
+import time
+from mytracer import trace_time
+import HIP.roctx as roctx
 
 @six.add_metaclass(abc.ABCMeta)
 class StandardTrainable(runnable.AbstractTrainable):
@@ -51,6 +54,7 @@ class StandardTrainable(runnable.AbstractTrainable):
           train_fn = tf.function(train_fn)
         self.train_loop_fn = utils.create_loop_fn(train_fn)
 
+  @trace_time
   def train(self,
             num_steps: Optional[tf.Tensor]) -> Optional[Dict[Text, tf.Tensor]]:
     """See base class."""

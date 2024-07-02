@@ -35,6 +35,9 @@ flags.DEFINE_boolean('trace_warmup', default=False,
                      help='Whether or not to programmatically capture an Xprof'
                      ' trace in the warmup loop.')
 
+import time
+from mytracer import trace_time
+import HIP.roctx as roctx
 
 class _UnwrapPreventer(object):
   """Wrapper that DistributionStrategy will not unwrap.
@@ -68,6 +71,10 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
     self.dtype = flags_core.get_tf_dtype(flags_obj)
     self.time_callback = time_callback
 
+    self.roctx_start = self.flags_obj.roctx_start
+    self.roctx_stop =self.flags_obj.roctx_stop
+    print("self.roctx_start=",self.roctx_start,"self.roctx_stop=",self.roctx_stop)
+    
     # Input pipeline related
     batch_size = flags_obj.batch_size
     if batch_size % self.strategy.num_replicas_in_sync != 0:
@@ -241,6 +248,7 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
         dataset_cache=self.flags_obj.training_dataset_cache,
         prefetch_batchs=self.flags_obj.training_prefetch_batchs)
 
+  @trace_time    
   def train_loop_begin(self):
     """See base class."""
     # Reset all metrics
@@ -259,54 +267,70 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
 
     self.time_callback.on_batch_begin(self.epoch_helper.batch_index)
 
+  @trace_time
   def train_step(self, iterator):
     """See base class."""
 
+    @trace_time
     @tf.function(experimental_compile=True)
     def local_step(images, labels):
       """Local computation of a step."""
 
       with tf.GradientTape() as tape:
-        logits = self.model(images, training=True)
+        @trace_time
+        def get_logits(images):
+          return self.model(images, training=True)
 
-        if self.one_hot:
-          prediction_loss = tf.keras.losses.categorical_crossentropy(
+        @trace_time
+        def get_loss(labels, logits):  
+          if self.one_hot:
+            prediction_loss = tf.keras.losses.categorical_crossentropy(
               labels, logits, label_smoothing=self.label_smoothing)
-        else:
-          prediction_loss = tf.keras.losses.sparse_categorical_crossentropy(
+          else:
+            prediction_loss = tf.keras.losses.sparse_categorical_crossentropy(
               labels, logits)
-        loss = tf.reduce_sum(prediction_loss) * (
+          loss = tf.reduce_sum(prediction_loss) * (
             1.0 / self.flags_obj.batch_size)
 
-        # Save ~3 seconds per epoch on GPU when skipping
-        # L2 loss computation; can only skip when using LARS
-        # Details in decription of cl/308018913
-        if not self.use_lars_optimizer:
-          num_replicas = self.strategy.num_replicas_in_sync
+          # Save ~3 seconds per epoch on GPU when skipping
+          # L2 loss computation; can only skip when using LARS
+          # Details in decription of cl/308018913
+          if not self.use_lars_optimizer:
+            num_replicas = self.strategy.num_replicas_in_sync
 
-          if self.flags_obj.single_l2_loss_op:
-            l2_loss = self.flags_obj.weight_decay * 2 * tf.add_n([
+            if self.flags_obj.single_l2_loss_op:
+              l2_loss = self.flags_obj.weight_decay * 2 * tf.add_n([
                 tf.nn.l2_loss(v)
                 for v in self.model.trainable_variables
                 if 'bn' not in v.name
-            ])
+              ])
 
-            loss += (l2_loss / num_replicas)
-          else:
-            loss += (tf.reduce_sum(self.model.losses) / num_replicas)
+              loss += (l2_loss / num_replicas)
+            else:
+              loss += (tf.reduce_sum(self.model.losses) / num_replicas)
 
-        # Scale the loss
+          # Scale the loss
+          if self.flags_obj.dtype == 'fp16':
+            loss = self.optimizer.get_scaled_loss(loss)
+          return loss
+
+        logits = get_logits(images)
+        loss = get_loss(labels, logits)
+
+      @trace_time
+      def get_gradients(loss):
+        grads = tape.gradient(loss, self.model.trainable_variables)
+
+        # Unscale the grads
         if self.flags_obj.dtype == 'fp16':
-          loss = self.optimizer.get_scaled_loss(loss)
-
-      grads = tape.gradient(loss, self.model.trainable_variables)
-
-      # Unscale the grads
-      if self.flags_obj.dtype == 'fp16':
-        grads = self.optimizer.get_unscaled_gradients(grads)
+          grads = self.optimizer.get_unscaled_gradients(grads)
+        return grads
+        
+      grads = get_gradients(loss)
       
       return logits, loss, grads
 
+    @trace_time
     def _maybe_apply_grads_and_clear(distribution):
       def _apply_grads_and_clear_for_each_replica():
         local_replica_id = tf.get_static_value(
@@ -326,12 +350,14 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
           accum_grad.assign(tf.zeros_like(accum_grad,
                                           dtype=self.accum_grads_dtype),
                             read_value=False)
+      @trace_time
       def _apply_grads_and_clear():
         distribution.extended.call_for_each_replica(
             _apply_grads_and_clear_for_each_replica,
             args=())
         return self.optimizer.iterations.assign_add(0, read_value=False)
 
+      @trace_time
       def _advance_iteration():
         return self.optimizer.iterations.assign_add(1, read_value=False)
 
@@ -341,6 +367,7 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
           _apply_grads_and_clear,
           _advance_iteration)
 
+    @trace_time
     def step_fn(inputs):
       """Function to run on the device."""
       images, labels = inputs
@@ -360,9 +387,17 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
         self.train_loss.update_state(loss)
       if self.train_accuracy:
         self.train_accuracy.update_state(labels, logits)
+        
+    #if self.global_step == self.roctx_start:
+    #  roctx.start()    
 
     self.strategy.run(step_fn, args=(next(iterator),))
+    
+    #if self.global_step == self.roctx_stop:
+    #  roctx.stop()
 
+        
+  @trace_time    
   def train_loop_end(self):
     """See base class."""
     metrics = {}
@@ -383,6 +418,7 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
     self._epoch_end()
     return metrics
 
+  @trace_time
   def eval_begin(self):
     """See base class."""
     if self.test_loss:
@@ -395,9 +431,11 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
     mlp_log.mlperf_print('eval_start', None,
                          metadata={'epoch_num': epoch_num + 1})
 
+  @trace_time    
   def eval_step(self, iterator):
     """See base class."""
 
+    @trace_time    
     def step_fn(inputs):
       """Function to run on the device."""
       images, labels = inputs
@@ -427,6 +465,7 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
 
     self.strategy.run(step_fn, args=(next(iterator),))
 
+  @trace_time    
   def eval_end(self):
     """See base class."""
     epoch_num = int(self.epoch_helper.current_epoch)
@@ -476,12 +515,14 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
     results['continue_training'] = continue_training
     return results
 
+  @trace_time    
   def warmup_loop_begin(self):
     """See base class."""
     if self.flags_obj.trace_warmup:
       self.trace_start(-3)
     logging.info('Entering the warmup loop.')
 
+  @trace_time    
   def warmup_loop_end(self):
     """See base class."""
     if self.flags_obj.trace_warmup:
@@ -495,10 +536,12 @@ class ResnetRunnable(standard_runnable.StandardRunnableWithWarmup):
                         read_value=False)
     logging.info('Exiting the warmup loop.')
 
+  @trace_time    
   def _epoch_begin(self):
     if self.epoch_helper.epoch_begin():
       self.time_callback.on_epoch_begin(self.epoch_helper.current_epoch)
 
+  @trace_time    
   def _epoch_end(self):
     # mlp_log.mlperf_print('epoch_stop', None)
     if self.epoch_helper.epoch_end():

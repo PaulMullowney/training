@@ -634,12 +634,13 @@ def get_flag_module(flags_obj, flag):
 
 def get_num_train_iterations(flags_obj):
   """Returns the number of training steps, train and test epochs."""
+  nimages = int(imagenet_preprocessing.NUM_IMAGES['train'] / flags_obj.dataset_divider)
   if flags_obj.drop_train_remainder:
     steps_per_epoch = (
-        imagenet_preprocessing.NUM_IMAGES['train'] // flags_obj.batch_size)
+        nimages // flags_obj.batch_size)
   else:
     steps_per_epoch = (
-        math.ceil(1.0 * imagenet_preprocessing.NUM_IMAGES['train'] /
+        math.ceil(1.0 * nimages /
                   flags_obj.batch_size))
 
   train_epochs = flags_obj.train_epochs
@@ -653,19 +654,22 @@ def get_num_train_iterations(flags_obj):
     train_epochs = eval_offset_epochs + math.ceil(
         (train_epochs - eval_offset_epochs) /
         epochs_between_evals) * epochs_between_evals
+  print("dataset divider=",flags_obj.dataset_divider, "step_per_epoch=",steps_per_epoch)
 
   return steps_per_epoch, train_epochs
 
 
 def get_num_eval_steps(flags_obj):
   """Returns the number of eval steps."""
+  nimages = int(imagenet_preprocessing.NUM_IMAGES['validation'] / flags_obj.dataset_divider)
   if flags_obj.drop_eval_remainder:
     eval_steps = (
-        imagenet_preprocessing.NUM_IMAGES['validation'] // flags_obj.batch_size)
+        nimages // flags_obj.batch_size)
   else:
     eval_steps = (
-        math.ceil(1.0 * imagenet_preprocessing.NUM_IMAGES['validation'] /
+        math.ceil(1.0 * nimages /
                   flags_obj.batch_size))
+  print("dataset divider=",flags_obj.dataset_divider, "eval_steps=",eval_steps)
 
   return eval_steps
 

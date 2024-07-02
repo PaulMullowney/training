@@ -31,11 +31,13 @@ from absl import flags
 import tensorflow as tf
 
 import imagenet_preprocessing
-from tensorflow.python.keras import backend
-from tensorflow.python.keras import initializers
-from tensorflow.python.keras import layers as tf_python_keras_layers
-from tensorflow.python.keras import models
-from tensorflow.python.keras import regularizers
+from tensorflow.keras import backend
+from tensorflow.keras import initializers
+from tensorflow.keras import layers as tf_python_keras_layers
+from tensorflow.keras import models
+from tensorflow.keras import regularizers
+
+from mytracer import trace_time
 
 BATCH_NORM_DECAY = 0.9
 BATCH_NORM_EPSILON = 1e-5
@@ -55,6 +57,7 @@ flags.DEFINE_integer(
 layers = tf_python_keras_layers
 
 
+@trace_time
 def change_keras_layer(use_tf_keras_layers=False):
   """Change layers to either tf.keras.layers or tf.python.keras.layers.
 
@@ -78,10 +81,12 @@ def change_keras_layer(use_tf_keras_layers=False):
     layers = tf_python_keras_layers
 
 
+@trace_time
 def _gen_l2_regularizer(use_l2_regularizer=True):
   return regularizers.l2(FLAGS.weight_decay) if use_l2_regularizer else None
 
 
+@trace_time
 def identity_block(input_tensor,
                    kernel_size,
                    filters,
@@ -160,6 +165,7 @@ def identity_block(input_tensor,
   return x
 
 
+@trace_time
 def conv_block(input_tensor,
                kernel_size,
                filters,
@@ -260,6 +266,7 @@ def conv_block(input_tensor,
   return x
 
 
+@trace_time
 def resnet50(num_classes,
              batch_size=None,
              use_l2_regularizer=True,
