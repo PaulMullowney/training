@@ -4,10 +4,10 @@ GPU_ARCH = gfx942
 #SRCS_ALL = $(shell echo *.cpp)
 SRCS_ALL = roctx.cpp
 
-CFLAGS = -O3 -Wall -fPIC --offload-arch=$(GPU_ARCH) -munsafe-fp-atomics
+CFLAGS = -O3 -Wall -fPIC --offload-arch=$(GPU_ARCH) -munsafe-fp-atomics --rocm-path=/opt/rocm-6.1.2
 SRCS = $(SRCS_ALL)
 
-INCLUDES = -I/. -I$(ROCM_PATH)/include/roctracer
+INCLUDES = -I/. -I$(ROCM_PATH)/include/roctracer -I$(ROCM_PATH)/include/
 LIBS = -L$(ROCM_PATH)/roctracer/lib -lroctracer64 -lroctx64
 
 

@@ -73,10 +73,9 @@ done
 #echo "Clear page cache"
 #sync && /sbin/sysctl vm.drop_caches=3
 #export ROCR_VISIBLE_DEVICES=1
-export OMP_NUM_THREADS=24
+export OMP_NUM_THREADS=2
 export OMP_PLACES=cores
 export OMP_PROC_BIND=master
-export DATASETS_NUM_PRIVATE_THREADS=$OMP_NUM_THREADS
 
 BATCH_SIZE=$((batch_size*ngpus))
 steps_per_loop=$(((1281167/dataset_divider) / BATCH_SIZE ))
@@ -88,13 +87,14 @@ ostr="_1_div_${dataset_divider}"
 if [[ $latest ]];
 then
     ofile="_latest"
-    export LD_LIBRARY_PATH=/home/afanfari/SOURCES/rocBLAS_latest/build/release/rocblas-install/lib:$LD_LIBRARY_PATH
-    export LD_LIBRARY_PATH=/home/pmullown/TF/MIOpen/build/lib:$LD_LIBRARY_PATH
+    #export LD_LIBRARY_PATH=/home/afanfari/SOURCES/rocBLAS_latest/build/release/rocblas-install/lib:$LD_LIBRARY_PATH
+    #export LD_LIBRARY_PATH=/home/pmullown/TF/MIOpen/build/lib:$LD_LIBRARY_PATH
     
 else
     ofile=""
-    export LD_LIBRARY_PATH=/home/afanfari/SOURCES/rocBLAS/build/release/rocblas-install/lib:$LD_LIBRARY_PATH
+    #export LD_LIBRARY_PATH=/home/afanfari/SOURCES/rocBLAS/build/release/rocblas-install/lib:$LD_LIBRARY_PATH
 fi
+#ofile=""
 
 if [[ $enable_eager ]];
 then
@@ -139,17 +139,19 @@ fi
 
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export ROCM_PATH=/opt/rocm-6.1.2/
+export HIP_PATH=/opt/rocm-6.1.2/
 #export GPU_MAX_HW_QUEUES=1
 #export MIOPEN_FIND_ENFORCE=3
+#numactl -C 0-23 -m 0
+source /home/pmullown/TF/tf-venv/bin/activate
 
-#numactl -C 0-23 -m 0 
 ${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
 	--base_learning_rate=8.5 \
 	--batch_size=${BATCH_SIZE} \
 	--clean \
-	--data_dir=/home/rajarora/applications/MLPERF/benchmarks/data/resnet/train \
-	--datasets_num_private_threads=24 \
-	--dtype=fp32 \
+	--data_dir=/mnt/thera/data/incoming/raj_ml_datasets/resnet50/tf_records/train \
+	--datasets_num_private_threads=16 \
+	--dtype=fp16 \
 	--device_warmup_steps=1 \
 	--noenable_device_warmup \
 	--noenable_xla \
@@ -174,8 +176,9 @@ ${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
 	--target_accuracy=0.759 \
 	--notf_data_experimental_slack \
 	--tf_gpu_thread_mode=gpu_private \
+	--per_gpu_thread_count=4 \
 	--notrace_warmup \
-	--train_epochs=4 \
+	--train_epochs=1 \
 	--notraining_dataset_cache \
 	--training_prefetch_batchs=128 \
 	--nouse_synthetic_data \
