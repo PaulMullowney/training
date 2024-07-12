@@ -11,8 +11,15 @@ enable_eager=
 roctx_start=1
 roctx_stop=2
 data_format=channels_first
+precision=fp32
+epochs=41
 for i in "$@"; do
     case "$1" in
+	# precision
+        -p=*|--precision=*)
+	    precision="${i#*=}"
+	    shift # past argument=value
+	    ;;
 	# Batch size per device
         -df=*|--data_format=*)
 	    data_format="${i#*=}"
@@ -26,6 +33,11 @@ for i in "$@"; do
 	# Number of GPUs to use
 	-g=*|--num_gpus=*)
 	    ngpus="${i#*=}"
+	    shift # past argument=value
+	    ;;	
+	# Number of epochs to run
+	-e=*|--epochs=*)
+	    epochs="${i#*=}"
 	    shift # past argument=value
 	    ;;	
 	# Number of GPUs to use
@@ -73,7 +85,7 @@ done
 #echo "Clear page cache"
 #sync && /sbin/sysctl vm.drop_caches=3
 #export ROCR_VISIBLE_DEVICES=1
-export OMP_NUM_THREADS=2
+export OMP_NUM_THREADS=24
 export OMP_PLACES=cores
 export OMP_PROC_BIND=master
 
@@ -106,6 +118,16 @@ if [ "$data_format" = "channels_first" ]; then
 else
     ostr=${ofile}${ostr}_nchw
 fi
+
+if [ "$precision" = "fp16" ]; then
+    ostr=${ofile}${ostr}_fp16
+elif [ "$precision" = "bf16" ]; then
+    ostr=${ofile}${ostr}_bf16
+else
+    ostr=${ofile}${ostr}_fp32
+fi
+
+ostr=${ostr}_${epochs}epochs
 
 ##########################################
 # Make the output dir
@@ -142,20 +164,24 @@ export ROCM_PATH=/opt/rocm-6.1.2/
 export HIP_PATH=/opt/rocm-6.1.2/
 #export GPU_MAX_HW_QUEUES=1
 #export MIOPEN_FIND_ENFORCE=3
-#numactl -C 0-23 -m 0
-source /home/pmullown/TF/tf-venv/bin/activate
+#
+#--per_gpu_thread_count=4 \
+source /lustremi/users/xmullowneyp/tf-venv/bin/activate
 
-${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
+export ROCBLAS_INTERNAL_FP16_ALT_IMPL=1
+export MIOPEN_DEBUG_CONVOLUTION_ATTRIB_FP16_ALT_IMPL=1
+
+echo "numactl -C 0-23 -m 0 ${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
 	--base_learning_rate=8.5 \
 	--batch_size=${BATCH_SIZE} \
 	--clean \
-	--data_dir=/mnt/thera/data/incoming/raj_ml_datasets/resnet50/tf_records/train \
-	--datasets_num_private_threads=16 \
-	--dtype=fp16 \
+	--data_dir=/lustremi/software/datasets/imagenet//ILSVRC/Data/CLS-LOC//tf_records/train \
+	--datasets_num_private_threads=24 \
+	--dtype=${precision} \
 	--device_warmup_steps=1 \
 	--noenable_device_warmup \
 	--noenable_xla \
-	--epochs_between_evals=4 \
+	--epochs_between_evals=1 \
 	--noeval_dataset_cache \
 	--eval_offset_epochs=2 \
 	--eval_prefetch_batchs=192 \
@@ -163,7 +189,7 @@ ${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
 	--lars_epsilon=0 \
 	--log_steps=125 \
 	--lr_schedule=polynomial \
-	--model_dir=/home/pmullown/TF/training/image_classification/tensorflow2/output \
+	--model_dir=/lustremi/users/xmullowneyp/training/image_classification/tensorflow2/output \
 	--momentum=0.9 \
 	--num_accumulation_steps=2 \
 	--num_classes=1000 \
@@ -176,9 +202,52 @@ ${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
 	--target_accuracy=0.759 \
 	--notf_data_experimental_slack \
 	--tf_gpu_thread_mode=gpu_private \
-	--per_gpu_thread_count=4 \
 	--notrace_warmup \
-	--train_epochs=1 \
+	--train_epochs=${epochs} \
+	--notraining_dataset_cache \
+	--training_prefetch_batchs=128 \
+	--nouse_synthetic_data \
+	--warmup_epochs=5 \
+	--dataset_divider=${dataset_divider} \
+	${enable_eager} \
+	--roctx_start=${roctx_start} \
+	--roctx_stop=${roctx_stop} \
+	--data_format=${data_format} \
+	--weight_decay=0.0002 &> ${odir}/tf_out${ostr}.txt" > run_command.txt
+
+numactl -C 0-23 -m 0 ${rprof_cmd} python3 ./resnet_ctl_imagenet_main.py \
+	--base_learning_rate=8.5 \
+	--batch_size=${BATCH_SIZE} \
+	--clean \
+	--data_dir=/lustremi/software/datasets/imagenet//ILSVRC/Data/CLS-LOC//tf_records/train \
+	--datasets_num_private_threads=24 \
+	--dtype=${precision} \
+	--device_warmup_steps=1 \
+	--noenable_device_warmup \
+	--noenable_xla \
+	--epochs_between_evals=1 \
+	--noeval_dataset_cache \
+	--eval_offset_epochs=2 \
+	--eval_prefetch_batchs=192 \
+	--label_smoothing=0.1 \
+	--lars_epsilon=0 \
+	--log_steps=125 \
+	--lr_schedule=polynomial \
+	--model_dir=/lustremi/users/xmullowneyp/training/image_classification/tensorflow2/output \
+	--momentum=0.9 \
+	--num_accumulation_steps=2 \
+	--num_classes=1000 \
+	--num_gpus=${ngpus} \
+	--optimizer=LARS \
+	--noreport_accuracy_metrics \
+	--single_l2_loss_op \
+	--noskip_eval \
+	--steps_per_loop=${steps_per_loop} \
+	--target_accuracy=0.759 \
+	--notf_data_experimental_slack \
+	--tf_gpu_thread_mode=gpu_private \
+	--notrace_warmup \
+	--train_epochs=${epochs} \
 	--notraining_dataset_cache \
 	--training_prefetch_batchs=128 \
 	--nouse_synthetic_data \

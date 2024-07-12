@@ -47,7 +47,7 @@ def set_mixed_precision_policy(dtype, loss_scale=None):
         'mixed_float16')
     tf.keras.mixed_precision.set_global_policy(policy)
   elif dtype == tf.bfloat16:
-    policy = tf.keras.mixed_precision.experimental.Policy(
+    policy = tf.keras.mixed_precision.Policy(
         'mixed_bfloat16')
     tf.keras.mixed_precision.set_global_policy(policy)
   elif dtype == tf.float32:
